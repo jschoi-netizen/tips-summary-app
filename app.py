@@ -15,6 +15,12 @@ with st.sidebar:
     num_reviewers = st.number_input("평가위원 수", min_value=1, max_value=5, value=3)
     required_phrases = st.text_area("필수 문구 입력", "평가단 승인사항, 협약 시 보완사항")
 
+    # 위원 이름 입력칸
+    reviewer_names = []
+    for i in range(num_reviewers):
+        name = st.text_input(f"위원 {i+1} 이름", f"위원{i+1}")
+        reviewer_names.append(name)
+
 # ----------------------------
 # 전처리 함수
 # ----------------------------
@@ -44,7 +50,8 @@ def preprocess_opinions(opinions):
     cleaned = [normalize_text(op.strip()) for op in opinions if op.strip()]
     return deduplicate(cleaned)
 
-def byte_len(s): return len(s.encode("utf-8"))
+def byte_len(s): 
+    return len(s.encode("utf-8"))
 
 def summarize_text(text, limit=3900):
     sentences = [s.strip() for s in re.split(r'[.!?]\s*', text) if s.strip()]
@@ -60,7 +67,7 @@ def summarize_text(text, limit=3900):
     return " ".join(summary)
 
 # ----------------------------
-# 의견 입력 (탭 구조)
+# 의견 입력 (탭 구조, 위원 이름 반영)
 # ----------------------------
 st.header("💬 위원별 의견 입력")
 
@@ -69,17 +76,20 @@ tab1, tab2, tab3, tab4 = st.tabs(["기술성", "사업성", "연구개발비 조
 tech_inputs, biz_inputs, budget_inputs, etc_inputs = [], [], [], []
 
 with tab1:
-    for i in range(num_reviewers):
-        tech_inputs.append(st.text_area(f"기술성 의견 (위원 {i+1})"))
+    for i, name in enumerate(reviewer_names):
+        tech_inputs.append(st.text_area(f"기술성 의견 ({name})"))
+
 with tab2:
-    for i in range(num_reviewers):
-        biz_inputs.append(st.text_area(f"사업성 의견 (위원 {i+1})"))
+    for i, name in enumerate(reviewer_names):
+        biz_inputs.append(st.text_area(f"사업성 의견 ({name})"))
+
 with tab3:
-    for i in range(num_reviewers):
-        budget_inputs.append(st.text_area(f"연구개발비 조정 의견 (위원 {i+1})"))
+    for i, name in enumerate(reviewer_names):
+        budget_inputs.append(st.text_area(f"연구개발비 조정 의견 ({name})"))
+
 with tab4:
-    for i in range(num_reviewers):
-        etc_inputs.append(st.text_area(f"기타사항 (위원 {i+1})"))
+    for i, name in enumerate(reviewer_names):
+        etc_inputs.append(st.text_area(f"기타사항 ({name})"))
 
 # ----------------------------
 # 결과 생성
@@ -94,14 +104,18 @@ if st.button("🚀 종합의견 생성"):
 
     if len(set(tech)) > 1:
         summary += "[기술성] ⚠️ 의견 상이:\n" + "\n".join([f"- {op}" for op in tech]) + "\n"
-    elif tech: summary += "[기술성] " + ", ".join(tech) + "\n"
+    elif tech:
+        summary += "[기술성] " + ", ".join(tech) + "\n"
 
     if len(set(biz)) > 1:
         summary += "\n[사업성] ⚠️ 의견 상이:\n" + "\n".join([f"- {op}" for op in biz]) + "\n"
-    elif biz: summary += "\n[사업성] " + ", ".join(biz) + "\n"
+    elif biz:
+        summary += "\n[사업성] " + ", ".join(biz) + "\n"
 
-    if budget: summary += "\n[연구개발비 조정] " + ", ".join(budget) + "\n"
-    if etc: summary += "\n[기타사항] " + ", ".join(etc) + "\n"
+    if budget:
+        summary += "\n[연구개발비 조정] " + ", ".join(budget) + "\n"
+    if etc:
+        summary += "\n[기타사항] " + ", ".join(etc) + "\n"
 
     # 필수 문구 체크
     missing = []
@@ -129,3 +143,4 @@ if st.button("🚀 종합의견 생성"):
             short_len = byte_len(short)
             st.success(f"✂️ 요약 완료 ({short_len}/4000)")
             st.text_area("줄인 결과", short, height=200)
+
