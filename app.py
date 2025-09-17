@@ -2,7 +2,6 @@ import streamlit as st
 import re
 from collections import Counter
 from io import BytesIO
-from docx import Document
 
 st.set_page_config(page_title="TIPS 종합의견 도우미", layout="wide")
 
@@ -17,7 +16,6 @@ with st.sidebar:
     num_reviewers = st.number_input("평가위원 수", min_value=1, max_value=5, value=3)
     required_phrases = st.text_area("필수 문구 입력", "평가단 승인사항, 협약 시 보완사항")
 
-    # 위원 이름 입력칸
     reviewer_names = []
     for i in range(num_reviewers):
         name = st.text_input(f"위원 {i+1} 이름", f"위원{i+1}")
@@ -69,7 +67,7 @@ def summarize_text(text, limit=3900):
     return " ".join(summary)
 
 # ----------------------------
-# 의견 입력 (탭 구조, 위원 이름 반영)
+# 의견 입력 (탭 구조)
 # ----------------------------
 st.header("💬 위원별 의견 입력")
 
@@ -133,13 +131,13 @@ if st.button("🚀 종합의견 생성"):
     summary += f"\n\n글자수(바이트): {byte_count}/4000"
 
     # ----------------------------
-    # UI 표시 (카드 스타일)
+    # UI 표시
     # ----------------------------
     st.header("📑 종합의견 결과")
     st.info(summary)
 
     # ----------------------------
-    # 📥 다운로드 버튼
+    # 📥 TXT 다운로드 버튼만
     # ----------------------------
     st.download_button(
         label="📥 종합의견 TXT 다운로드",
@@ -148,22 +146,7 @@ if st.button("🚀 종합의견 생성"):
         mime="text/plain"
     )
 
-    doc = Document()
-    doc.add_paragraph(summary)
-    buffer = BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-
-    st.download_button(
-        label="📥 종합의견 Word 다운로드",
-        data=buffer,
-        file_name="종합의견.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
-
-    # ----------------------------
     # 글자수 초과 처리
-    # ----------------------------
     if byte_count > 4000:
         st.error("⚠️ 4000byte 초과")
         if st.button("✂️ 글자수 줄이기"):
@@ -171,5 +154,4 @@ if st.button("🚀 종합의견 생성"):
             short_len = byte_len(short)
             st.success(f"✂️ 요약 완료 ({short_len}/4000)")
             st.text_area("줄인 결과", short, height=200)
-
 
