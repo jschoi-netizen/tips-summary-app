@@ -1,13 +1,13 @@
 import streamlit as st
+import re
+from collections import Counter
 
 st.title("TIPS 선정평가 종합의견 도우미 (MVP)")
-st.write("이 앱은 평가위원별 의견을 취합하고 정리하여 간사님의 종합의견 작성 시간을 줄여줍니다.")
+st.write("위원별 의견을 취합하고 정리하여 간사님의 종합의견 작성 시간을 줄여줍니다.")
 
 # ----------------------------
 # 🔧 전처리 함수들
 # ----------------------------
-
-# 오타 및 표현 통일
 def normalize_text(text):
     if not text:
         return ""
@@ -24,22 +24,44 @@ def normalize_text(text):
         text = text.replace(wrong, correct)
     return text
 
-# 중복 제거 (단어 순서 차이가 있어도 같은 의미로 판단)
 def deduplicate(opinions):
     unique = []
     seen = set()
     for op in opinions:
-        norm = " ".join(sorted(op.split()))  # 단어 정렬해서 순서 차이 보정
+        norm = " ".join(sorted(op.split()))  # 단어 정렬로 순서 차이 보정
         if norm not in seen:
             seen.add(norm)
             unique.append(op)
     return unique
 
-# 전처리 (오타 수정 + 중복 제거)
 def preprocess_opinions(opinions):
     cleaned = [normalize_text(op.strip()) for op in opinions if op.strip()]
     return deduplicate(cleaned)
 
+def byte_len(s: str) -> int:
+    return len(s.encode("utf-8"))
+
+# ----------------------------
+# 🔧 요약 함수 (중요 단어 기반)
+# ----------------------------
+def summarize_text(text, limit=3900):
+    sentences = [s.strip() for s in re.split(r'[.!?]\s*', text) if s.strip()]
+    words = re.findall(r'\w+', text)
+    freq = Counter(words)
+
+    # 각 문장별 점수 = 중요한 단어 등장 횟수
+    sentence_scores = {s: sum(freq[w] for w in re.findall(r'\w+', s)) for s in sentences}
+    ranked = sorted(sentence_scores, key=sentence_scores.get, reverse=True)
+
+    summary_sentences = []
+    current_len = 0
+    for s in ranked:
+        if current_len + byte_len(s) > limit:
+            break
+        summary_sentences.append(s)
+        current_len += byte_len(s)
+
+    return " ".join(summary_sentences)
 
 # ----------------------------
 # 🔧 입력 UI
@@ -63,7 +85,6 @@ for i in range(num_reviewers):
 st.header("필수 문구 입력 (간사가 반드시 작성해야 함)")
 required_phrases = st.text_area("예: 평가단 승인사항, 협약 시 보완사항", "")
 
-
 # ----------------------------
 # 🔧 결과 생성 버튼
 # ----------------------------
@@ -73,43 +94,29 @@ if st.button("종합의견 생성"):
     budget_opinions = preprocess_opinions(budget_inputs)
     etc_opinions = preprocess_opinions(etc_inputs)
 
-    # 항목별 취합 결과 표시
     st.subheader("📌 항목별 취합 결과 (중복 제거 후)")
     st.write("**기술성**", tech_opinions)
     st.write("**사업성**", biz_opinions)
     st.write("**연구개발비 조정**", budget_opinions)
     st.write("**기타사항**", etc_opinions)
 
-    # ----------------------------
-    # 🔧 종합의견 초안 생성
-    # ----------------------------
     summary = "✨ 종합의견(초안)\n\n"
 
-    # 기술성
     if len(set(tech_opinions)) > 1:
-        summary += "[기술성] ⚠️ 위원 간 의견이 상이합니다:\n"
-        for op in tech_opinions:
-            summary += f"- {op}\n"
+        summary += "[기술성] ⚠️ 위원 간 의견이 상이합니다:\n" + "\n".join([f"- {op}" for op in tech_opinions]) + "\n"
     elif tech_opinions:
         summary += "[기술성] " + ", ".join(tech_opinions) + "\n"
 
-    # 사업성
     if len(set(biz_opinions)) > 1:
-        summary += "\n[사업성] ⚠️ 위원 간 의견이 상이합니다:\n"
-        for op in biz_opinions:
-            summary += f"- {op}\n"
+        summary += "\n[사업성] ⚠️ 위원 간 의견이 상이합니다:\n" + "\n".join([f"- {op}" for op in biz_opinions]) + "\n"
     elif biz_opinions:
         summary += "\n[사업성] " + ", ".join(biz_opinions) + "\n"
 
-    # 연구개발비 조정
     if budget_opinions:
         summary += "\n[연구개발비 조정] " + ", ".join(budget_opinions) + "\n"
-
-    # 기타사항
     if etc_opinions:
         summary += "\n[기타사항] " + ", ".join(etc_opinions) + "\n"
 
-    # 필수 문구 확인
     missing_phrases = []
     if required_phrases:
         for phrase in required_phrases.split(","):
@@ -120,28 +127,22 @@ if st.button("종합의견 생성"):
     if missing_phrases:
         summary += "\n❌ 누락된 필수 문구: " + ", ".join(missing_phrases)
 
-    # ----------------------------
-    # 🔧 글자수 계산
-    # ----------------------------
-    byte_count = len(summary.encode("utf-8"))
+    byte_count = byte_len(summary)
     summary += f"\n\n글자수(바이트): {byte_count}/4000"
 
     st.subheader("종합의견 초안")
     st.text_area("원본 종합의견", summary, height=300)
 
-    # ----------------------------
-    # 🔧 글자수 초과 처리
-    # ----------------------------
     if byte_count > 4000:
-        st.error("⚠️ 글자수가 4000byte를 초과했습니다. 아래 버튼을 눌러 요약을 진행하세요.")
+        st.error("⚠️ 글자수가 4000byte를 초과했습니다. '글자수 줄이기' 버튼을 눌러주세요.")
 
         if st.button("✂️ 글자수 줄이기"):
-            # 간단 요약: 문단별 첫 문장만 남기기
-            shortened = "\n".join([line.split(".")[0] for line in summary.split("\n") if line.strip()])
-            shortened_byte = len(shortened.encode("utf-8"))
-
+            shortened = summarize_text(summary, limit=3900)
+            shortened_byte = byte_len(shortened)
             st.subheader("줄이기 전/후 비교")
             st.write("**줄이기 전 (원본):**")
             st.text_area("원본", summary, height=200)
             st.write("**줄인 후:**")
             st.text_area("줄인 결과", shortened + f"\n\n글자수(바이트): {shortened_byte}/4000", height=200)
+            st.success("✂️ 중요 단어 기반 요약 완료")
+
