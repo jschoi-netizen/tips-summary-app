@@ -1,6 +1,8 @@
 import streamlit as st
 import re
 from collections import Counter
+from io import BytesIO
+from docx import Document
 
 st.set_page_config(page_title="TIPS 종합의견 도우미", layout="wide")
 
@@ -136,6 +138,32 @@ if st.button("🚀 종합의견 생성"):
     st.header("📑 종합의견 결과")
     st.info(summary)
 
+    # ----------------------------
+    # 📥 다운로드 버튼
+    # ----------------------------
+    st.download_button(
+        label="📥 종합의견 TXT 다운로드",
+        data=summary,
+        file_name="종합의견.txt",
+        mime="text/plain"
+    )
+
+    doc = Document()
+    doc.add_paragraph(summary)
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    st.download_button(
+        label="📥 종합의견 Word 다운로드",
+        data=buffer,
+        file_name="종합의견.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+    # ----------------------------
+    # 글자수 초과 처리
+    # ----------------------------
     if byte_count > 4000:
         st.error("⚠️ 4000byte 초과")
         if st.button("✂️ 글자수 줄이기"):
@@ -143,4 +171,5 @@ if st.button("🚀 종합의견 생성"):
             short_len = byte_len(short)
             st.success(f"✂️ 요약 완료 ({short_len}/4000)")
             st.text_area("줄인 결과", short, height=200)
+
 
