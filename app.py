@@ -1,25 +1,16 @@
 import streamlit as st
 from difflib import SequenceMatcher
-from spellchecker import SpellChecker
 
 # -----------------------------
 # 기본 설정
 # -----------------------------
 st.set_page_config(page_title="TIPS 선정평가 종합의견 도우미", layout="wide")
 st.title("TIPS 선정평가 종합의견 도우미 (개선버전)")
-st.caption("위원별 의견을 취합, 교정, 중복 제거 후 종합의견을 자동 생성합니다.")
-
-spell = SpellChecker()
+st.caption("위원별 의견을 취합, 중복 제거, 의견 불일치 표시, 필수 문구 검토를 지원합니다.")
 
 # -----------------------------
 # 함수 정의
 # -----------------------------
-def correct_text(text):
-    """맞춤법 교정"""
-    words = text.split()
-    corrected = [spell.correction(w) if spell.correction(w) else w for w in words]
-    return " ".join(corrected)
-
 def is_similar(a, b, threshold=0.8):
     """문장 유사도 비교"""
     return SequenceMatcher(None, a, b).ratio() > threshold
@@ -63,9 +54,8 @@ for i, tab in enumerate(tabs):
         st.subheader(f"위원 {i+1}")
         for cat in categories:
             txt = st.text_area(f"{cat} 의견", key=f"{cat}_{i}", height=120)
-            corrected_txt = correct_text(txt) if txt else ""
-            if corrected_txt:
-                inputs[cat].append(corrected_txt)
+            if txt:
+                inputs[cat].append(txt)
 
 # -----------------------------
 # 종합의견 생성
