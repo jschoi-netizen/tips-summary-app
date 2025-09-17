@@ -1,107 +1,115 @@
 import streamlit as st
-from typing import List
-import re
+from difflib import SequenceMatcher
+from spellchecker import SpellChecker
 
-# 페이지 기본 설정
+# -----------------------------
+# 기본 설정
+# -----------------------------
 st.set_page_config(page_title="TIPS 선정평가 종합의견 도우미", layout="wide")
-st.title("TIPS 선정평가 종합의견 도우미 (MVP)")
-st.caption("위원 5명의 의견을 항목별로 입력 → 중복 제거/취합 → 종합의견 초안 생성")
+st.title("TIPS 선정평가 종합의견 도우미 (개선버전)")
+st.caption("위원별 의견을 취합, 교정, 중복 제거 후 종합의견을 자동 생성합니다.")
 
-CATS = ["기술성", "사업성", "연구개발비 조정", "기타사항"]
+spell = SpellChecker()
 
-def normalize(s: str) -> str:
-    """간단한 정규화: 공백 정리/일부 특수문자 제거 → 중복 판단에 사용"""
-    s = s.strip()
-    s = re.sub(r"\s+", " ", s)
-    # 핵심 구두점은 남기고 특수문자 과다 제거
-    s = re.sub(r"[^\w\s가-힣.,()/\-%:+]", "", s)
-    return s
+# -----------------------------
+# 함수 정의
+# -----------------------------
+def correct_text(text):
+    """맞춤법 교정"""
+    words = text.split()
+    corrected = [spell.correction(w) if spell.correction(w) else w for w in words]
+    return " ".join(corrected)
 
-def dedupe(lines: List[str]) -> List[str]:
-    """정규화 기반 중복 제거"""
-    seen = set()
-    out = []
-    for line in lines:
-        if not line:
+def is_similar(a, b, threshold=0.8):
+    """문장 유사도 비교"""
+    return SequenceMatcher(None, a, b).ratio() > threshold
+
+def merge_opinions(opinions):
+    """중복/유사 문장 제거"""
+    unique = []
+    for op in opinions:
+        op = op.strip()
+        if not op:
             continue
-        n = normalize(line)
-        if n and n not in seen:
-            out.append(line.strip())
-            seen.add(n)
-    return out
+        if not any(is_similar(op, u) for u in unique):
+            unique.append(op)
+    return unique
 
 def byte_len(s: str) -> int:
     return len(s.encode("utf-8"))
 
-# 5명의 위원 입력 탭
-tabs = st.tabs([f"위원 {i}" for i in range(1, 6)])
-inputs = []
-for i, tab in enumerate(tabs, start=1):
+# -----------------------------
+# 필수 문구 입력 (간사)
+# -----------------------------
+st.sidebar.header("⚠️ 필수 문구 설정")
+required_phrases = st.sidebar.text_area(
+    "필수 문구를 입력하세요 (줄바꿈으로 구분)", 
+    "평가단 승인사항\n협약 시 보완사항"
+).split("\n")
+required_phrases = [p.strip() for p in required_phrases if p.strip()]
+
+# -----------------------------
+# 위원별 의견 입력
+# -----------------------------
+num_reviewers = 5
+categories = ["기술성", "사업성", "연구개발비 조정", "기타사항"]
+inputs = {c: [] for c in categories}
+
+st.header("위원별 의견 입력")
+tabs = st.tabs([f"위원 {i+1}" for i in range(num_reviewers)])
+
+for i, tab in enumerate(tabs):
     with tab:
-        st.subheader(f"위원 {i}")
-        person = {}
-        for c in CATS:
-            person[c] = st.text_area(f"{c} 의견", height=120, key=f"{c}_{i}")
-        inputs.append(person)
+        st.subheader(f"위원 {i+1}")
+        for cat in categories:
+            txt = st.text_area(f"{cat} 의견", key=f"{cat}_{i}", height=120)
+            corrected_txt = correct_text(txt) if txt else ""
+            if corrected_txt:
+                inputs[cat].append(corrected_txt)
 
-# 취합 버튼
-if st.button("의견 취합하기"):
-    st.success("항목별 의견을 취합했습니다.")
-    # 1) 위원별 입력 → 항목별 묶기
-    by_cat = {c: [] for c in CATS}
-    for person in inputs:
-        for c in CATS:
-            text = person[c].strip()
-            if text:
-                by_cat[c].append(text)
+# -----------------------------
+# 종합의견 생성
+# -----------------------------
+if st.button("종합의견 생성"):
+    summary = "✨ 종합의견(초안)\n\n"
+    over_limit = False
 
-    # 2) 여러 줄을 불릿 단위로 분할 + 중복 제거
-    for c in CATS:
-        expanded = []
-        for t in by_cat[c]:
-            parts = [p.strip("•-·* ").strip() for p in t.split("\n") if p.strip()]
-            expanded.extend(parts)
-        by_cat[c] = dedupe(expanded)
+    for cat in categories:
+        merged = merge_opinions(inputs[cat])
 
-    # 3) 화면 표시
-    col1, col2 = st.columns([1, 1])
+        if not merged:
+            continue
 
-    with col1:
-        st.markdown("### 항목별 취합 결과 (중복 제거 후)")
-        for c in CATS:
-            st.markdown(f"**{c}**")
-            if by_cat[c]:
-                st.markdown("\n".join([f"- {pt}" for pt in by_cat[c]]))
-            else:
-                st.markdown("- (의견 없음)")
-            st.divider()
+        # 의견이 상이한 경우 표시
+        if len(merged) > 1:
+            summary += f"[{cat}] ⚠️ 위원 간 의견이 상이합니다:\n"
+        else:
+            summary += f"[{cat}]\n"
 
-    # 4) 종합의견 초안 생성
-    def build_summary(by_cat):
-        parts = []
-        parts.append("📌 종합의견(초안)\n")
-        for c in CATS:
-            parts.append(f"[{c}]")
-            if by_cat[c]:
-                parts.extend([f"- {pt}" for pt in by_cat[c]])
-            else:
-                parts.append("- 해당 없음")
-            parts.append("")  # 줄바꿈
-        parts.append("※ 평가단 승인사항 등 필수 항목은 협약 시점에 확인 바랍니다.")
-        return "\n".join(parts)
+        for m in merged:
+            summary += f"- {m}\n"
+        summary += "\n"
 
-    summary = build_summary(by_cat)
+    # 필수 문구 검증
+    missing = [p for p in required_phrases if not any(p in s for s in summary.splitlines())]
+    if missing:
+        summary += f"\n❌ 누락된 필수 문구: {', '.join(missing)}\n"
+    else:
+        summary += "\n✅ 모든 필수 문구가 포함되어 있습니다.\n"
 
-    with col2:
-        st.markdown("### 종합의견 초안")
-        st.text_area("자동 생성된 초안", summary, height=420, key="summary_area")
-        limit = 4000
-        length = byte_len(summary)
-        st.write(f"글자수(바이트): **{length} / {limit}**")
-        st.progress(min(length / limit, 1.0))
-        st.download_button(
-            "TXT로 다운로드",
-            data=summary,
-            file_name="종합의견_초안.txt",
-            mime="text/plain"
-        )
+    # 글자수 카운트
+    length = byte_len(summary)
+    summary += f"\n글자수(바이트): {length}/4000\n"
+
+    # 글자수 초과 시 자동 줄이기
+    if length > 4000:
+        over_limit = True
+        st.warning("⚠️ 글자수가 4000byte를 초과했습니다. 자동으로 줄인 버전을 아래에 표시합니다.")
+
+    st.markdown("### 종합의견 초안")
+    st.text_area("원본 종합의견", summary, height=400)
+
+    if over_limit:
+        shortened = summary[:3900] + "...(이하 생략)"
+        st.text_area("줄인 종합의견", shortened, height=300)
+        st.success("✂️ 줄이기 완료 (원본과 비교 가능)")
