@@ -9,29 +9,22 @@ import streamlit as st
 try:
     from openai import OpenAI
 except Exception:
-    # Streamlit Cloud에서 패키지 설치 전 초기 로드 대비
     OpenAI = None
 
 st.set_page_config(page_title="TIPS 선정평가 종합의견 도우미(평가간사용)", layout="wide")
 
-# =========================================
-# 설정 / 상수
-# =========================================
 SECTIONS = ["기술성", "사업성", "연구개발비 조정", "기타사항"]
 TITLE = "TIPS 선정평가 종합의견 도우미(평가간사용)"
 
 API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-
-# 모델은 최신이 있으면 그걸 쓰고, 없으면 gpt-4o-mini를 권장
 CHAT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# OpenAI Client 준비
 client = None
 if API_KEY and OpenAI is not None:
     client = OpenAI(api_key=API_KEY)
 
 # =========================================
-# 사이드바 - 설정
+# 사이드바
 # =========================================
 with st.sidebar:
     st.header("설정")
@@ -62,11 +55,9 @@ st.title(TITLE)
 st.caption("위원별 의견을 입력하고, [종합의견 생성]을 눌러 취합/검토 결과를 확인하세요.")
 
 # =========================================
-# 입력 폼 - 탭별/위원별
+# 입력 폼
 # =========================================
 tab_objs = st.tabs(SECTIONS)
-
-# 섹션별, 위원별 텍스트 입력을 담는 dict
 section_texts = {s: [] for s in SECTIONS}
 
 for tab, section in zip(tab_objs, SECTIONS):
@@ -83,7 +74,7 @@ for tab, section in zip(tab_objs, SECTIONS):
                 section_texts[section].append(txt or "")
 
 # =========================================
-# 요약 / 검증에 사용하는 System Prompt
+# 프롬프트
 # =========================================
 SYSTEM_PROMPT = """당신은 정부 R&D 사업 선정평가의 간사 보조원입니다.
 입력되는 '위원별 의견'을 보고 아래 JSON 형식으로만 답하세요.
@@ -108,11 +99,7 @@ label 규칙:
 - 명시적 상이의견은 요약 본문에 넣지 않고, dissent_reviewers로만 표기
 """
 
-# =========================================
-# GPT JSON 호출 + 예외 표시
-# =========================================
 def call_gpt_json(system_prompt: str, user_prompt: str, max_tokens: int = 900) -> dict:
-    """JSON 강제 / 예외 표시 / 폴백 반환"""
     try:
         if not client:
             raise RuntimeError("OpenAI Client 가 초기화되지 않았습니다. (API_KEY 미설정)")
@@ -136,24 +123,18 @@ def call_gpt_json(system_prompt: str, user_prompt: str, max_tokens: int = 900) -
         return json.loads(content)
     except Exception as e:
         st.error("❌ GPT 호출 중 오류가 발생했습니다. 상세를 아래에서 확인하세요.")
-        st.exception(e)
+        if DEBUG:
+            st.exception(e)
         return {
             "section": "",
             "majority_label": "중립",
             "reviewers": [],
-            "summary": "(오류로 인해 요약 생성 실패 — 입력 원문을 확인하세요.)",
+            "summary": "",
             "dissent_reviewers": [],
             "concerns": []
         }
 
-# =========================================
-# 의미 포함 여부 검사 (필수 문구)
-# =========================================
 def semantic_contains(required_phrase: str, texts: list[str]) -> bool:
-    """
-    요구문구가 의미적으로 들어있는지 GPT로 간단히 판정.
-    여러 텍스트를 합쳐 한 번에 판정해 비용/속도를 줄임.
-    """
     try:
         joined = "\n".join([t for t in texts if t])
         if not joined.strip():
@@ -173,17 +154,13 @@ def semantic_contains(required_phrase: str, texts: list[str]) -> bool:
         return False
 
 # =========================================
-# 종합 생성 로직 (강건성/예외내성)
+# 종합 생성 (반드시 값 반환)
 # =========================================
-def generate_all():
-    """
-    섹션별 의미 요약(JSON) + 상이의견 + 필수기재 의미검증 + 개별 칸 경고 맵 저장
-    ▶ 오류가 있어도 섹션별로 최대한 결과를 채워 넣도록 폴백 처리
-    """
-    out_boxes = {}
-    dissent_msgs = []
-    missing_msgs = []
-    dissent_map = {k: set() for k in SECTIONS}
+def generate_all() -> tuple[dict, list, list, dict]:
+    out_boxes: dict[str, str] = {}
+    dissent_msgs: list[str] = []
+    missing_msgs: list[str] = []
+    dissent_map: dict[str, set] = {k: set() for k in SECTIONS}
 
     for section, opinions in section_texts.items():
         try:
@@ -199,21 +176,16 @@ def generate_all():
 
             summary = (data.get("summary") or "").strip()
             if not summary:
-                summary = f"{section} 의견 요약 실패 — 주요 의견:\n" + "\n".join(
-                    [f"- {nm}: {tx}" for nm, tx in pairs[:3]]
-                )
+                # 폴백: 입력 일부라도 표시
+                summary = f"{section} 주요 의견 요약 실패 — 입력 요지:\n" + "\n".join([f"- {nm}: {tx}" for nm, tx in pairs[:3]])
             out_boxes[section] = summary
 
-            # 상이의견 매핑
             for nm in data.get("dissent_reviewers", []):
                 if nm:
                     dissent_map[section].add(nm)
             if data.get("dissent_reviewers"):
-                dissent_msgs.append(
-                    f"섹션 [{section}] 상이의견: {', '.join([n for n in data['dissent_reviewers'] if n])}"
-                )
+                dissent_msgs.append(f"섹션 [{section}] 상이의견: {', '.join([n for n in data['dissent_reviewers'] if n])}")
 
-            # 필수 기재 의미 포함 검사 (섹션 단위)
             flat_text = " ".join([tx for _, tx in pairs])
             miss = []
             for req in required_lines:
@@ -227,37 +199,50 @@ def generate_all():
             if DEBUG:
                 st.exception(e)
 
-    # 세션 저장
-    st.session_state.result_boxes = out_boxes
-    st.session_state.warnings_dissent = dissent_msgs
-    st.session_state.missing_required = missing_msgs
-    st.session_state.dissent_map = dissent_map
+    return out_boxes, dissent_msgs, missing_msgs, dissent_map
 
 # =========================================
-# 버튼 영역
+# 버튼
 # =========================================
 left, mid, right = st.columns([2, 1, 1])
 with left:
-    gen = st.button("종합의견 생성", use_container_width=True, type="primary")
+    gen_clicked = st.button("종합의견 생성", use_container_width=True, type="primary")
 with mid:
-    shrink = st.button("요약 더 줄이기", use_container_width=True, disabled=False)
+    shrink_clicked = st.button("요약 더 줄이기", use_container_width=True)
 with right:
-    # TXT 다운로드 버튼은 아래 결과 박스가 채워진 뒤 표시
     pass
 
 # =========================================
-# 버튼 동작
+# 생성 즉시 렌더 (세션 의존 X)
 # =========================================
-if gen:
+current_boxes = st.session_state.get("result_boxes", {s: "" for s in SECTIONS})
+current_dissent = st.session_state.get("warnings_dissent", [])
+current_missing = st.session_state.get("missing_required", [])
+current_dissent_map = st.session_state.get("dissent_map", {s: set() for s in SECTIONS})
+
+if gen_clicked:
     if not API_KEY:
-        st.error("OPENAI_API_KEY 가 설정되지 않았습니다. Streamlit Secrets에 추가하고 저장 후 새로고침 해주세요.")
+        st.error("OPENAI_API_KEY 가 설정되지 않았습니다. Streamlit Secrets에 추가하고 새로고침 해주세요.")
     else:
         with st.spinner("의미 요약/검증 중..."):
-            generate_all()
+            boxes, ds_msgs, miss_msgs, ds_map = generate_all()
+
+        # 즉시 화면에 반영
+        current_boxes = boxes
+        current_dissent = ds_msgs
+        current_missing = miss_msgs
+        current_dissent_map = ds_map
+
+        # 세션에도 저장(후속 버튼/다운로드용)
+        st.session_state["result_boxes"] = boxes
+        st.session_state["warnings_dissent"] = ds_msgs
+        st.session_state["missing_required"] = miss_msgs
+        st.session_state["dissent_map"] = ds_map
+
         st.success("✅ 종합의견 생성이 완료되었습니다.")
 
-if shrink and st.session_state.get("result_boxes"):
-    # 간단 축약: 각 섹션 요약을 '좀 더 간결히'로 재요청
+# 축약 버튼: 세션 값이 있을 때만
+if shrink_clicked and st.session_state.get("result_boxes"):
     try:
         new_boxes = {}
         for section, text in st.session_state["result_boxes"].items():
@@ -267,9 +252,9 @@ if shrink and st.session_state.get("result_boxes"):
             sys = "너는 글을 간결하고 핵심만 남기되 문장 호응은 자연스럽게 유지하는 편집자다."
             user = f"[섹션] {section}\n아래 문단을 더 짧고 명료하게 다듬어라:\n{text}"
             data = call_gpt_json(sys, user, max_tokens=400)
-            # 편의상 data['summary'] 대신 content 전체를 요약으로 취급
             new_boxes[section] = data.get("summary") or data.get("content") or text
-        st.session_state.result_boxes = new_boxes
+        st.session_state["result_boxes"] = new_boxes
+        current_boxes = new_boxes
         st.success("✂️ 요약을 더 간결히 정리했습니다.")
     except Exception as e:
         st.error("요약 축약 중 오류가 발생했습니다.")
@@ -277,49 +262,39 @@ if shrink and st.session_state.get("result_boxes"):
             st.exception(e)
 
 # =========================================
-# 결과 렌더 (종합의견 초안)
+# 결과 렌더
 # =========================================
 st.markdown("### ✅ 종합의견 초안")
-result_boxes = st.session_state.get("result_boxes", {s: "" for s in SECTIONS})
-
 with st.container(border=True):
     for section in SECTIONS:
         st.markdown(f"**{section}**")
         st.text_area(
             f"{section}-out",
-            value=result_boxes.get(section, ""),
+            value=current_boxes.get(section, ""),
             height=120,
             label_visibility="collapsed",
             key=f"out_{section}"
         )
 
-# 경고/알림
 warn_cols = st.columns(2)
 with warn_cols[0]:
-    # 상이의견
-    dissent_msgs = st.session_state.get("warnings_dissent", [])
-    if dissent_msgs:
-        for msg in dissent_msgs:
+    if current_dissent:
+        for msg in current_dissent:
             st.error(f"⚠️ {msg}")
 with warn_cols[1]:
-    # 필수 누락
-    missing_msgs = st.session_state.get("missing_required", [])
-    if missing_msgs:
-        for msg in missing_msgs:
+    if current_missing:
+        for msg in current_missing:
             st.error(f"❗ {msg}")
 
-# 개별 칸 옆 빨간 표시 (상이의견)
-dissent_map = st.session_state.get("dissent_map", {s: set() for s in SECTIONS})
-if any(dissent_map.values()):
+if any(current_dissent_map.values()):
     st.markdown("---")
     st.markdown("#### 🔴 상이의견 표시")
     for section in SECTIONS:
-        ds = dissent_map.get(section, set())
+        ds = current_dissent_map.get(section, set())
         if ds:
             st.markdown(f"- **{section}**: {', '.join(ds)}")
 
-# 바이트 수 / TXT 다운로드
-concat_text = "\n\n".join([f"[{sec}]\n{result_boxes.get(sec, '')}" for sec in SECTIONS]).strip()
+concat_text = "\n\n".join([f"[{sec}]\n{current_boxes.get(sec, '')}" for sec in SECTIONS]).strip()
 byte_len = len(concat_text.encode("utf-8"))
 row1, row2 = st.columns([1, 3])
 with row1:
@@ -332,4 +307,3 @@ with row2:
         mime="text/plain",
         use_container_width=True
     )
-
