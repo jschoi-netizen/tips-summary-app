@@ -13,6 +13,9 @@ except Exception:
 
 st.set_page_config(page_title="TIPS 선정평가 종합의견 도우미(평가간사용)", layout="wide")
 
+# =========================================
+# 기본 설정
+# =========================================
 SECTIONS = ["기술성", "사업성", "연구개발비 조정", "기타사항"]
 TITLE = "TIPS 선정평가 종합의견 도우미(평가간사용)"
 
@@ -22,6 +25,10 @@ CHAT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 client = None
 if API_KEY and OpenAI is not None:
     client = OpenAI(api_key=API_KEY)
+
+# --- 결과 출력 위젯을 위한 세션 상태 초기화 ---
+for sec in SECTIONS:
+    st.session_state.setdefault(f"out_{sec}", "")
 
 # =========================================
 # 사이드바
@@ -74,7 +81,7 @@ for tab, section in zip(tab_objs, SECTIONS):
                 section_texts[section].append(txt or "")
 
 # =========================================
-# 프롬프트
+# GPT 프롬프트
 # =========================================
 SYSTEM_PROMPT = """당신은 정부 R&D 사업 선정평가의 간사 보조원입니다.
 입력되는 '위원별 의견'을 보고 아래 JSON 형식으로만 답하세요.
@@ -99,11 +106,13 @@ label 규칙:
 - 명시적 상이의견은 요약 본문에 넣지 않고, dissent_reviewers로만 표기
 """
 
+# =========================================
+# 함수 정의
+# =========================================
 def call_gpt_json(system_prompt: str, user_prompt: str, max_tokens: int = 900) -> dict:
     try:
         if not client:
             raise RuntimeError("OpenAI Client 가 초기화되지 않았습니다. (API_KEY 미설정)")
-
         resp = client.chat.completions.create(
             model=CHAT_MODEL,
             temperature=0.2,
@@ -114,7 +123,6 @@ def call_gpt_json(system_prompt: str, user_prompt: str, max_tokens: int = 900) -
             ],
             max_tokens=max_tokens,
         )
-
         import json
         content = resp.choices[0].message.content
         if DEBUG:
@@ -122,7 +130,7 @@ def call_gpt_json(system_prompt: str, user_prompt: str, max_tokens: int = 900) -
                 st.code(content, language="json")
         return json.loads(content)
     except Exception as e:
-        st.error("❌ GPT 호출 중 오류가 발생했습니다. 상세를 아래에서 확인하세요.")
+        st.error("❌ GPT 호출 중 오류 발생")
         if DEBUG:
             st.exception(e)
         return {
@@ -139,70 +147,42 @@ def semantic_contains(required_phrase: str, texts: list[str]) -> bool:
         joined = "\n".join([t for t in texts if t])
         if not joined.strip():
             return False
-
         sys = "너는 의미 포함 여부만 판정하는 심사 보조원이다. 반드시 JSON {\"contains\": true|false} 로만 답하라."
-        user = f"""[요구문구]
-{required_phrase}
-
-[검토대상 텍스트]
-{joined}
-
-위 요구문구가 의미적으로 포함되어 있으면 true, 아니면 false. 동의어·말바꿈 포함."""
+        user = f"[요구문구]\n{required_phrase}\n\n[검토대상 텍스트]\n{joined}"
         data = call_gpt_json(sys, user, max_tokens=200)
         return bool(data.get("contains", False))
     except Exception:
         return False
 
-# =========================================
-# 종합 생성 (반드시 값 반환)
-# =========================================
 def generate_all() -> tuple[dict, list, list, dict]:
-    out_boxes: dict[str, str] = {}
-    dissent_msgs: list[str] = []
-    missing_msgs: list[str] = []
-    dissent_map: dict[str, set] = {k: set() for k in SECTIONS}
-
+    out_boxes, dissent_msgs, missing_msgs = {}, [], []
+    dissent_map = {k: set() for k in SECTIONS}
     for section, opinions in section_texts.items():
-        try:
-            pairs = [(nm, (tx or "").strip()) for nm, tx in zip(reviewer_names, opinions) if (tx or "").strip()]
-            if not pairs:
-                out_boxes[section] = "(의견 입력 없음)"
-                continue
-
-            joined = "\n".join([f"- {nm}: {tx}" for nm, tx in pairs])
-            user = f"[섹션] {section}\n[위원별 의견]\n{joined}"
-
-            data = call_gpt_json(SYSTEM_PROMPT, user, max_tokens=900)
-
-            summary = (data.get("summary") or "").strip()
-            if not summary:
-                # 폴백: 입력 일부라도 표시
-                summary = f"{section} 주요 의견 요약 실패 — 입력 요지:\n" + "\n".join([f"- {nm}: {tx}" for nm, tx in pairs[:3]])
-            out_boxes[section] = summary
-
-            for nm in data.get("dissent_reviewers", []):
-                if nm:
-                    dissent_map[section].add(nm)
-            if data.get("dissent_reviewers"):
-                dissent_msgs.append(f"섹션 [{section}] 상이의견: {', '.join([n for n in data['dissent_reviewers'] if n])}")
-
-            flat_text = " ".join([tx for _, tx in pairs])
-            miss = []
-            for req in required_lines:
-                if req.strip() and not semantic_contains(req, [flat_text]):
-                    miss.append(req.strip())
-            if miss:
-                missing_msgs.append(f"섹션 [{section}] 필수 기재 누락: {', '.join(miss)}")
-
-        except Exception as e:
-            out_boxes[section] = f"(섹션 처리 중 오류) {e}"
-            if DEBUG:
-                st.exception(e)
-
+        pairs = [(nm, (tx or "").strip()) for nm, tx in zip(reviewer_names, opinions) if (tx or "").strip()]
+        if not pairs:
+            out_boxes[section] = "(의견 입력 없음)"
+            continue
+        joined = "\n".join([f"- {nm}: {tx}" for nm, tx in pairs])
+        user = f"[섹션] {section}\n[위원별 의견]\n{joined}"
+        data = call_gpt_json(SYSTEM_PROMPT, user, max_tokens=900)
+        summary = (data.get("summary") or "").strip() or f"{section} 의견 요약 실패"
+        out_boxes[section] = summary
+        for nm in data.get("dissent_reviewers", []):
+            if nm:
+                dissent_map[section].add(nm)
+        if data.get("dissent_reviewers"):
+            dissent_msgs.append(f"섹션 [{section}] 상이의견: {', '.join(data['dissent_reviewers'])}")
+        flat_text = " ".join([tx for _, tx in pairs])
+        miss = []
+        for req in required_lines:
+            if req.strip() and not semantic_contains(req, [flat_text]):
+                miss.append(req.strip())
+        if miss:
+            missing_msgs.append(f"섹션 [{section}] 필수 기재 누락: {', '.join(miss)}")
     return out_boxes, dissent_msgs, missing_msgs, dissent_map
 
 # =========================================
-# 버튼
+# 버튼 영역
 # =========================================
 left, mid, right = st.columns([2, 1, 1])
 with left:
@@ -213,35 +193,25 @@ with right:
     pass
 
 # =========================================
-# 생성 즉시 렌더 (세션 의존 X)
+# 버튼 동작
 # =========================================
-current_boxes = st.session_state.get("result_boxes", {s: "" for s in SECTIONS})
-current_dissent = st.session_state.get("warnings_dissent", [])
-current_missing = st.session_state.get("missing_required", [])
-current_dissent_map = st.session_state.get("dissent_map", {s: set() for s in SECTIONS})
-
 if gen_clicked:
     if not API_KEY:
-        st.error("OPENAI_API_KEY 가 설정되지 않았습니다. Streamlit Secrets에 추가하고 새로고침 해주세요.")
+        st.error("OPENAI_API_KEY 가 설정되지 않았습니다.")
     else:
         with st.spinner("의미 요약/검증 중..."):
             boxes, ds_msgs, miss_msgs, ds_map = generate_all()
-
-        # 즉시 화면에 반영
-        current_boxes = boxes
-        current_dissent = ds_msgs
-        current_missing = miss_msgs
-        current_dissent_map = ds_map
-
-        # 세션에도 저장(후속 버튼/다운로드용)
         st.session_state["result_boxes"] = boxes
         st.session_state["warnings_dissent"] = ds_msgs
         st.session_state["missing_required"] = miss_msgs
         st.session_state["dissent_map"] = ds_map
 
+        # ✅ 텍스트 영역 세션 상태에도 직접 주입 (즉시 표시)
+        for sec in SECTIONS:
+            st.session_state[f"out_{sec}"] = boxes.get(sec, "")
+
         st.success("✅ 종합의견 생성이 완료되었습니다.")
 
-# 축약 버튼: 세션 값이 있을 때만
 if shrink_clicked and st.session_state.get("result_boxes"):
     try:
         new_boxes = {}
@@ -254,47 +224,45 @@ if shrink_clicked and st.session_state.get("result_boxes"):
             data = call_gpt_json(sys, user, max_tokens=400)
             new_boxes[section] = data.get("summary") or data.get("content") or text
         st.session_state["result_boxes"] = new_boxes
-        current_boxes = new_boxes
+        for sec in SECTIONS:
+            st.session_state[f"out_{sec}"] = new_boxes.get(sec, "")
         st.success("✂️ 요약을 더 간결히 정리했습니다.")
     except Exception as e:
-        st.error("요약 축약 중 오류가 발생했습니다.")
+        st.error("요약 축약 중 오류 발생.")
         if DEBUG:
             st.exception(e)
 
 # =========================================
-# 결과 렌더
+# 결과 렌더링
 # =========================================
 st.markdown("### ✅ 종합의견 초안")
 with st.container(border=True):
     for section in SECTIONS:
         st.markdown(f"**{section}**")
         st.text_area(
-            f"{section}-out",
-            value=current_boxes.get(section, ""),
+            key=f"out_{section}",
             height=120,
             label_visibility="collapsed",
-            key=f"out_{section}"
+            disabled=True
         )
 
 warn_cols = st.columns(2)
 with warn_cols[0]:
-    if current_dissent:
-        for msg in current_dissent:
-            st.error(f"⚠️ {msg}")
+    for msg in st.session_state.get("warnings_dissent", []):
+        st.error(f"⚠️ {msg}")
 with warn_cols[1]:
-    if current_missing:
-        for msg in current_missing:
-            st.error(f"❗ {msg}")
+    for msg in st.session_state.get("missing_required", []):
+        st.error(f"❗ {msg}")
 
-if any(current_dissent_map.values()):
+if any(st.session_state.get("dissent_map", {s: set() for s in SECTIONS}).values()):
     st.markdown("---")
     st.markdown("#### 🔴 상이의견 표시")
     for section in SECTIONS:
-        ds = current_dissent_map.get(section, set())
+        ds = st.session_state.get("dissent_map", {}).get(section, set())
         if ds:
             st.markdown(f"- **{section}**: {', '.join(ds)}")
 
-concat_text = "\n\n".join([f"[{sec}]\n{current_boxes.get(sec, '')}" for sec in SECTIONS]).strip()
+concat_text = "\n\n".join([f"[{sec}]\n{st.session_state.get(f'out_{sec}', '')}" for sec in SECTIONS]).strip()
 byte_len = len(concat_text.encode("utf-8"))
 row1, row2 = st.columns([1, 3])
 with row1:
