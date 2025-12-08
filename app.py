@@ -90,7 +90,7 @@ st.markdown(
 st.markdown(
     """
     <div class="title-wrapper">
-        <img src="https://i.imgur.com/YNn7dYk.png" class="tips-logo">
+        <img src="https://i.imgur.com/YNn7dYk.png">
         <div>
             <div class="main-title">TIPS 선정평가 종합의견 도우미(평가간사용)</div>
             <div class="subtitle-text">
