@@ -13,71 +13,205 @@ st.set_page_config(
     layout="wide",
 )
 
-# ------------------------------
-# 페이지 상단 제목 / 설명
-# ------------------------------
-st.title("TIPS 선정평가 종합의견 도우미(평가간사용)")
-
+# ==============================
+#  공통 스타일 (CSS)
+# ==============================
 st.markdown(
     """
-각 위원의 **혼합된 전체 의견**을 한 칸에 붙여넣어 주세요.  
-(기술성/사업성/연구개발비 조정/기타사항이 섞여 있어도 됩니다.)  
+<style>
+/* 전체 배경 & 폰트 */
+html, body, [class*="css"]  {
+    font-family: -apple-system, BlinkMacSystemFont, "Noto Sans KR", sans-serif;
+}
 
-**🔴 종합의견 생성** 버튼을 누르면 아래 5개 항목으로 자동 분류·취합됩니다.
+/* 메인 영역 배경 */
+.main {
+    background-color: #f5f7fb;
+}
 
-1. 기술성 종합의견  
-2. 사업성 종합의견  
-3. 협약 시 보완사항  
-4. 연구개발비 조정의견  
-5. 기타 의견
-"""
+/* 상단 타이틀 */
+.app-title {
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin-bottom: 0.2rem;
+}
+
+.app-subtitle {
+    font-size: 14px;
+    color: #6b7280;
+}
+
+/* 카드 공통 */
+.tips-card {
+    padding: 1.2rem 1.4rem;
+    border-radius: 0.9rem;
+    background-color: #ffffff;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+    margin-bottom: 1.2rem;
+}
+
+/* 섹션 제목 */
+.section-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+/* 작은 뱃지 */
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 0.25rem;
+}
+.badge-red {
+    background-color: #fee2e2;
+    color: #b91c1c;
+}
+.badge-blue {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+}
+.badge-green {
+    background-color: #dcfce7;
+    color: #15803d;
+}
+
+/* 메인 버튼 스타일 약간 강조 */
+.stButton > button {
+    border-radius: 999px;
+    padding: 0.55rem 1.5rem;
+    font-weight: 600;
+}
+
+/* 텍스트에어리어 살짝 둥글게 */
+textarea {
+    border-radius: 0.6rem !important;
+}
+
+/* 상이의견 에러 박스 여백 */
+.block-container .element-container:has(.disagree-box) {
+    margin-top: 0.3rem;
+}
+
+/* 다운로드 버튼 */
+.stDownloadButton > button {
+    border-radius: 999px;
+}
+</style>
+""",
+    unsafe_allow_html=True,
 )
 
-st.divider()
+# ==============================
+#  상단 제목 / 설명
+# ==============================
+st.markdown(
+    """
+<div class="app-title">TIPS 선정평가 종합의견 도우미(평가간사용)</div>
+<div class="app-subtitle">
+위험한 ‘창작’ 없이, 평가위원 의견을 그대로 정리·취합해서 종합의견 초안을 만드는 도구입니다.
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
-# ------------------------------
-# 위원 설정 (이름 + 의견 입력)
-# ------------------------------
-NUM_REVIEWERS = 5
+st.write("")
+top_col1, top_col2 = st.columns([2.2, 1])
 
-cols = st.columns(NUM_REVIEWERS)
-reviewer_names = []
-reviewer_texts = []
+with top_col1:
+    st.markdown(
+        """
+<div class="tips-card">
+  <div class="section-title">사용 방법</div>
+  <ul style="font-size:13px; color:#4b5563; padding-left:1.1rem; margin-bottom:0.3rem;">
+    <li>각 위원의 <b>혼합된 전체 의견</b>을 한 칸에 붙여넣어 주세요.<br/>
+        (기술성/사업성/연구개발비 조정/기타사항이 섞여 있어도 됩니다.)</li>
+    <li><span class="badge badge-red">🔴 종합의견 생성</span> 버튼을 누르면 아래 5개 항목으로 자동 분류·취합됩니다.</li>
+  </ul>
+  <div style="font-size:13px; color:#6b7280; margin-top:0.4rem;">
+    1) 기술성 종합의견 · 2) 사업성 종합의견 · 3) 협약 시 보완사항 · 4) 연구개발비 조정의견 · 5) 기타 의견
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
-for i in range(NUM_REVIEWERS):
-    with cols[i]:
-        name = st.text_input(f"위원{i+1} 이름", value=f"위원{i+1}", key=f"name_{i}")
-        reviewer_names.append(name)
-        txt = st.text_area(
-            f"{name} 의견 입력",
-            height=260,
-            key=f"text_{i}",
-            placeholder="각 위원이 작성한 평가 의견 전체를 붙여넣어 주세요.",
-        )
-        reviewer_texts.append(txt.strip())
+with top_col2:
+    st.markdown(
+        """
+<div class="tips-card">
+  <div style="font-size:13px; font-weight:600; margin-bottom:0.3rem;">프롬프트 원칙</div>
+  <ul style="font-size:12px; color:#4b5563; padding-left:1.1rem; margin-bottom:0.4rem;">
+    <li>원문에 없는 내용은 <b>절대로</b> 만들지 않음</li>
+    <li>중요한 bullet은 삭제하지 않고 그대로 유지</li>
+    <li>동일 취지 bullet만 조심스럽게 병합</li>
+  </ul>
+  <div style="font-size:12px; color:#9ca3af;">
+    ※ 종합의견은 간사가 최종 검토 후 사용해야 합니다.
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
-st.divider()
+# ==============================
+#  위원 설정 (이름 + 의견 입력)
+# ==============================
+st.markdown('<div class="section-title" style="margin-top:0.3rem;">① 위원별 평가 의견 입력</div>', unsafe_allow_html=True)
+
+input_card = st.container()
+with input_card:
+    st.markdown('<div class="tips-card">', unsafe_allow_html=True)
+
+    NUM_REVIEWERS = 5
+    cols = st.columns(NUM_REVIEWERS)
+    reviewer_names = []
+    reviewer_texts = []
+
+    for i in range(NUM_REVIEWERS):
+        with cols[i]:
+            name = st.text_input(f"위원{i+1} 이름", value=f"위원{i+1}", key=f"name_{i}")
+            reviewer_names.append(name)
+            txt = st.text_area(
+                f"{name} 의견 입력",
+                height=260,
+                key=f"text_{i}",
+                placeholder="각 위원이 작성한 평가 의견 전체를 붙여넣어 주세요.",
+            )
+            reviewer_texts.append(txt.strip())
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------
 # 종합의견 생성 버튼
 # ------------------------------
-generate = st.button("🔴 종합의견 생성", type="primary")
+st.write("")
+btn_col1, btn_col2 = st.columns([1, 3])
+with btn_col1:
+    generate = st.button("🔴 종합의견 생성", type="primary")
+with btn_col2:
+    st.caption("버튼 클릭 시 OpenAI API를 호출하여 종합의견 초안을 생성합니다.")
 
 # 종합의견 결과 표시 영역
-st.subheader("종합의견 초안")
-summary_area = st.empty()
+st.markdown('<div class="section-title" style="margin-top:0.6rem;">② 종합의견 초안</div>', unsafe_allow_html=True)
+summary_card = st.container()
+summary_area = summary_card.empty()
 
 # 상이 의견 표시 영역
+st.markdown('<div class="section-title" style="margin-top:0.6rem;">③ 상이 의견 알림</div>', unsafe_allow_html=True)
 disagree_container = st.container()
 
 # 세션에 마지막 종합의견 저장용
 if "last_summary_text" not in st.session_state:
     st.session_state["last_summary_text"] = ""
 
-
-# ------------------------------
-# GPT 호출 & JSON 파싱 함수
-# ------------------------------
+# ==============================
+#  GPT 호출 & JSON 파싱 함수
+# ==============================
 def call_openai_for_summary(names, opinions):
     """위원별 의견을 입력받아 OpenAI로 종합의견 JSON을 생성."""
     joined = [op for op in opinions if op]
@@ -91,7 +225,6 @@ def call_openai_for_summary(names, opinions):
             continue
         reviewers_block += f"[위원 {idx}: {nm}]\n{op}\n\n"
 
-    # ----- 프롬프트: 할루시네이션 최소화 / 내용 보존 강화 -----
     system_prompt = """
 당신은 한국의 TIPS R&D 선정평가 간사를 돕는 **아주 보수적인** 도우미입니다.
 당신의 목표는 "창작"이 아니라, 위원들이 쓴 문장을 **거의 그대로 정리·분류**하는 것입니다.
@@ -218,7 +351,7 @@ bullet 형식으로 **정리만** 하세요.
             {"role": "system", "content": system_prompt.strip()},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.0,  # 창작 최소화
+        temperature=0.0,
         max_tokens=2200,
     )
 
@@ -241,98 +374,114 @@ bullet 형식으로 **정리만** 하세요.
             return None
 
 
-# ------------------------------
-# 버튼 눌렸을 때: 종합의견 생성
-# ------------------------------
-if generate:
-    with st.spinner("GPT가 종합의견을 생성 중입니다..."):
-        result = call_openai_for_summary(reviewer_names, reviewer_texts)
+# ==============================
+#  버튼 눌렸을 때: 종합의견 생성
+# ==============================
+with summary_card:
+    st.markdown('<div class="tips-card">', unsafe_allow_html=True)
 
-    if result is None:
-        st.stop()
+    if generate:
+        with st.spinner("GPT가 종합의견을 생성 중입니다..."):
+            result = call_openai_for_summary(reviewer_names, reviewer_texts)
 
-    sections = result.get("sections") or {}
-    tech_bullets = sections.get("tech") or []
-    biz_bullets = sections.get("biz") or []
-    improve_bullets = sections.get("improve") or []
-    budget_bullets = sections.get("budget") or []
-    other_bullets = sections.get("other") or []
+        if result is None:
+            st.stop()
 
-    def format_section(title, bullets):
-        if not bullets:
-            bullets = ["별도 기재된 사항 없음."]
-        lines = [title] + [f"- {b}" for b in bullets]
-        return "\n".join(lines)
+        sections = result.get("sections") or {}
+        tech_bullets = sections.get("tech") or []
+        biz_bullets = sections.get("biz") or []
+        improve_bullets = sections.get("improve") or []
+        budget_bullets = sections.get("budget") or []
+        other_bullets = sections.get("other") or []
 
-    part_tech = format_section("1. 기술성 종합의견", tech_bullets)
-    part_biz = format_section("2. 사업성 종합의견", biz_bullets)
-    part_improve = format_section("3. 협약시 보완사항", improve_bullets)
-    part_budget = format_section("4. 연구개발비 조정의견", budget_bullets)
-    part_other = format_section("5. 기타 의견", other_bullets)
+        def format_section(title, bullets):
+            if not bullets:
+                bullets = ["별도 기재된 사항 없음."]
+            lines = [title] + [f"- {b}" for b in bullets]
+            return "\n".join(lines)
 
-    final_text = (
-        part_tech + "\n\n" +
-        part_biz + "\n\n" +
-        part_improve + "\n\n" +
-        part_budget + "\n\n" +
-        part_other
-    )
+        part_tech = format_section("1. 기술성 종합의견", tech_bullets)
+        part_biz = format_section("2. 사업성 종합의견", biz_bullets)
+        part_improve = format_section("3. 협약시 보완사항", improve_bullets)
+        part_budget = format_section("4. 연구개발비 조정의견", budget_bullets)
+        part_other = format_section("5. 기타 의견", other_bullets)
 
-    # 화면에 종합의견 표시
-    summary_area.text_area(
-        "종합의견 초안(자동 생성)",
-        value=final_text,
-        height=320,
-    )
+        final_text = (
+            part_tech + "\n\n" +
+            part_biz + "\n\n" +
+            part_improve + "\n\n" +
+            part_budget + "\n\n" +
+            part_other
+        )
 
-    # 마지막 종합의견을 세션에 저장 → TXT 다운로드용
-    st.session_state["last_summary_text"] = final_text
+        # ✅ 사용자가 수정할 수 있고, 수정 내용이 세션에 반영되도록
+        edited = summary_area.text_area(
+            "종합의견 초안(자동 생성 후, 필요 시 직접 수정하세요)",
+            value=final_text,
+            height=320,
+            key="summary_text",
+        )
+        st.session_state["last_summary_text"] = edited
 
-    # 상이 의견 표시
-    disagree_info = result.get("disagreements") or []
-    disagree_container.markdown("### 상이 의견(위원별 확인 필요)")
+        # 상이 의견 표시
+        disagree_info = result.get("disagreements") or []
+        disagree_container.markdown(
+            '<div class="tips-card disagree-box">',
+            unsafe_allow_html=True,
+        )
 
-    idx_to_reason = {}
-    for item in disagree_info:
-        try:
-            idx = int(item.get("reviewer_index"))
-        except (TypeError, ValueError):
-            continue
-        reason = (item.get("reason") or "").strip()
-        if not reason:
-            continue
-        if 1 <= idx <= NUM_REVIEWERS:
-            name = item.get("reviewer_name") or reviewer_names[idx - 1]
+        idx_to_reason = {}
+        for item in disagree_info:
+            try:
+                idx = int(item.get("reviewer_index"))
+            except (TypeError, ValueError):
+                continue
+            reason = (item.get("reason") or "").strip()
+            if not reason:
+                continue
+            if 1 <= idx <= 5:
+                name = item.get("reviewer_name") or reviewer_names[idx - 1]
+            else:
+                name = item.get("reviewer_name") or f"위원{idx}"
+            idx_to_reason[idx] = (name, reason)
+
+        if not idx_to_reason:
+            disagree_container.success("상이 의견으로 표시된 내용이 없습니다.")
         else:
-            name = item.get("reviewer_name") or f"위원{idx}"
-        idx_to_reason[idx] = (name, reason)
+            for idx, (name, reason) in idx_to_reason.items():
+                disagree_container.error(f"위원 {idx} ({name}) 상이 의견: {reason}")
 
-    if not idx_to_reason:
-        disagree_container.success("상이 의견으로 표시된 내용이 없습니다.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     else:
-        for idx, (name, reason) in idx_to_reason.items():
-            disagree_container.error(f"위원 {idx} ({name}) 상이 의견: {reason}")
+        # 아직 버튼 안 눌렀을 때 또는 이미 생성된 후 다시 수정하는 경우
+        existing = st.session_state.get("last_summary_text", "")
+        edited = summary_area.text_area(
+            "종합의견 초안(자동 생성 후, 필요 시 직접 수정하세요)",
+            value=existing,
+            height=320,
+            key="summary_text",
+        )
+        st.session_state["last_summary_text"] = edited
 
-else:
-    # 아직 버튼 안 눌렀을 때
-    summary_area.text_area(
-        "종합의견 초안(자동 생성)",
-        value=st.session_state.get("last_summary_text", ""),
-        height=320,
-    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# ------------------------------
-# TXT 다운로드 버튼
-# ------------------------------
-st.divider()
-st.markdown("#### TXT로 다운로드")
+# ==============================
+#  TXT 다운로드 버튼
+# ==============================
+st.markdown('<div class="section-title" style="margin-top:0.6rem;">④ TXT로 내보내기</div>', unsafe_allow_html=True)
+download_card = st.container()
+with download_card:
+    st.markdown('<div class="tips-card">', unsafe_allow_html=True)
+    if st.session_state.get("last_summary_text"):
+        st.download_button(
+            label="📄 TXT 파일 다운로드",
+            data=st.session_state["last_summary_text"],
+            file_name="tips_summary.txt",
+            mime="text/plain",
+        )
+        st.caption("※ K-Startup 시스템 등에 붙여넣기 전에 한 번 더 눈으로 검토해 주세요.")
+    else:
+        st.info("먼저 위에서 **종합의견 생성**을 눌러 종합의견을 만든 뒤 다운로드할 수 있습니다.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-if st.session_state.get("last_summary_text"):
-    st.download_button(
-        label="📄 TXT 파일 다운로드",
-        data=st.session_state["last_summary_text"],
-        file_name="tips_summary.txt",
-        mime="text/plain",
-    )
-else:
-    st.info("먼저 위에서 **종합의견 생성**을 눌러 종합의견을 만든 뒤 다운로드할 수 있습니다.")
