@@ -113,7 +113,7 @@ st.markdown(
     """
 <div class="app-title">TIPS 선정평가 종합의견 도우미(평가간사용)</div>
 <div class="app-subtitle">
-위험한 ‘창작’ 없이, 평가위원 의견을 그대로 정리·취합해서 종합의견 초안을 만드는 도구입니다.
+팁스 선정평가 시 작성된 평가위원 의견을 그대로 정리·취합해서 종합의견 초안을 만드는 도구입니다.
 </div>
 """,
     unsafe_allow_html=True,
