@@ -1,286 +1,229 @@
-import os
-from collections import defaultdict
 import streamlit as st
+import json
+import os
+from openai import OpenAI
 
-# ============== OpenAI (Optional) ==============
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
+# ----------------------------
+# 기본 설정
+# ----------------------------
+st.set_page_config(page_title="TIPS 선정평가 종합의견 도우미(평가간사용)", layout="wide")
 
-API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-CHAT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-client = None
-if API_KEY and OpenAI is not None:
-    client = OpenAI(api_key=API_KEY)
+# OpenAI 클라이언트
+api_key = os.environ.get("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+if not api_key:
+    st.error("❌ OPENAI_API_KEY가 설정되어 있지 않습니다. Streamlit Secrets에 키를 등록해 주세요.")
+    st.stop()
 
-# ============== Constants / State ==============
-SECTIONS = ["기술성", "사업성", "연구개발비 조정", "기타사항"]
-TITLE = "TIPS 선정평가 종합의견 도우미(평가간사용)"
+client = OpenAI(api_key=api_key)
 
-st.set_page_config(page_title=TITLE, layout="wide")
-st.session_state.setdefault("result_boxes", {s: "" for s in SECTIONS})
-st.session_state.setdefault("result_combined", "")
-st.session_state.setdefault("dissent_map", {s: set() for s in SECTIONS})
-st.session_state.setdefault("warnings_dissent", [])
-st.session_state.setdefault("missing_required", [])
 
-# ============== Sidebar ==============
-with st.sidebar:
-    st.header("설정")
-    DEBUG = st.checkbox("🔧 진단 모드(원인 로그 보기)", value=False)
-    num_reviewers = st.number_input("평가위원 수", 1, 5, 5, 1)
+# ----------------------------
+# 유틸 함수
+# ----------------------------
+def build_system_prompt() -> str:
+    """
+    여러 위원의 평가 의견을 받아,
+    기술성/사업성/협약 시 보완사항/연구개발비 조정의견/기타의견
+    5개 항목으로 통합 종합의견을 만드는 역할을 정의한 프롬프트
+    """
+    return """
+당신은 한국 정부 R&D(TIPS) 평가에서 '종합의견'을 작성하는 베테랑 간사입니다.
 
-    reviewer_names = []
-    for i in range(num_reviewers):
-        nm = st.text_input(f"위원{i+1} 이름", f"위원{i+1}")
-        reviewer_names.append((nm or f"위원{i+1}").strip())
+입력으로 여러 평가위원의 의견이 주어집니다.
+각 의견은 기술성, 사업성, 협약 시 보완사항, 연구개발비 조정의견, 기타의견이 섞여 있을 수 있습니다.
 
-    st.markdown("---")
-    st.subheader("필수 기재 내용")
-    st.caption("한 줄에 하나, 의미적으로 포함되었는지 검토합니다.")
-    required_raw = st.text_area("필수 기재 내용(한 줄에 하나)", "평가단 승인사항\n협약 시 보완사항", height=100)
-    REQUIRED_LINES = [ln.strip() for ln in required_raw.splitlines() if ln.strip()]
+당신의 역할:
 
-    st.markdown("---")
-    if not API_KEY:
-        st.warning("`OPENAI_API_KEY`가 Secrets에 설정되지 않았습니다. (AI 분류/요약 없이 기본 화면만 동작)")
-    else:
-        st.caption("🔒 OPENAI_API_KEY는 Streamlit Secrets를 통해 안전하게 주입됩니다.")
+1. 모든 위원 의견을 꼼꼼하게 읽고, **중요한 내용은 절대 버리지 말고** 최대한 유지합니다.
+   - 구체적인 지적사항, 수치, 조건, 권고사항, 금액, 일정 등은 그대로 살립니다.
+   - 의미가 겹치는 문장은 하나로 묶되, 핵심 내용이 빠지지 않도록 합니다.
 
-# ============== Title & 설명 ==============
-st.title(TITLE)
-st.caption("각 위원의 ‘혼합된 전체 의견’을 한 칸에 붙여넣으세요. (기술성/사업성/연구개발비 조정/기타사항이 섞여 있어도 됩니다.) "
-           "‘종합의견 생성’을 누르면 자동으로 4개 항목으로 분리·취합합니다.")
+2. 내용을 아래 5개 항목으로 재분류하여 통합합니다.
+   (1) 기술성 종합의견
+       - 성과지표, 기술적 파급효과, 개발 필요성, 기술 구현 가능성, 안정성 등
+   (2) 사업성 종합의견
+       - 시장성, 글로벌 진출 가능성, 경제적 파급효과, 일자리 창출 등
+   (3) 협약시 보완사항
+       - 협약 체결 전·후에 반드시 보완해야 할 사항(성과지표 보완, 추진체계 보완 등)
+   (4) 연구개발비 조정의견
+       - 허용/불허, 삭감·전용 필요, 세목별 조정 의견 등
+   (5) 기타의견
+       - 위탁연구개발기관 관련, 제도적 사항, 평가 절차 관련 코멘트 등
 
-# ============== 입력(위원별 한 칸) ==============
-st.markdown("### 위원별 평가 의견 입력")
-cols = st.columns(len(reviewer_names))
-reviewer_texts = []
-for j, c in enumerate(cols):
-    with c:
-        txt = st.text_area(
-            f"{reviewer_names[j]}",
-            placeholder="한 칸에 해당 위원의 전체 평가의견을 붙여넣으세요.\n(기술성/사업성/연구개발비 조정/기타사항이 섞여 있어도 됩니다.)",
-            key=f"mixed_{j}",
-            height=220
-        )
-        reviewer_texts.append(txt or "")
+3. 각 항목은 **위원 의견을 근거로 한 종합의견**이어야 하며,
+   새로운 주장이나 근거를 임의로 만들어 내지 않습니다.
 
-# ============== GPT 유틸 ==============
-SYSTEM_JSON = """너는 정부 R&D 사업 선정평가 간사 보조원이다.
-입력되는 '위원별 전체 의견'을 읽고 아래 JSON만 출력한다.
+4. 분량:
+   - 전체 종합의견은 한글 기준 약 2,500~3,500자 정도(A4 1~1.5장)를 목표로 합니다.
+   - 다만 중요한 내용 때문에 조금 더 길어지는 것은 허용됩니다.
+   - 과도하게 짧게 요약하지 마세요. 위원 의견이 가진 뉘앙스와 구체성을 유지해야 합니다.
 
-JSON 스키마:
+5. 문체:
+   - 실제 정부 R&D 평가 종합의견처럼, 존칭 없이 서술형·보고서 형식으로 작성합니다.
+   - 각 항목 안에서는 여러 문단(또는 여러 문장)으로 자연스럽게 서술합니다.
+
+반드시 아래 JSON 형식으로만 응답하세요. 설명이나 여분의 텍스트를 붙이지 마세요.
+
 {
-  "sections": {
-    "기술성": {
-      "summary": "<합의 기반 3~5문장 요약(문어체, 자연스러운 호응)>",
-      "majority_label": "긍정|부정|중립",
-      "dissent_reviewers": ["상이의견 위원명", ...]
-    },
-    "사업성": { ... 동형식 ... },
-    "연구개발비 조정": { ... 동형식 ... },  // 없으면 summary는 빈 문자열 ""
-    "기타사항": { ... 동형식 ... }           // 없으면 summary는 빈 문자열 ""
-  }
+  "technical": "여기에 기술성 종합의견을 한국어로 작성",
+  "business": "여기에 사업성 종합의견을 한국어로 작성",
+  "cooperation": "여기에 협약시 보완사항을 한국어로 작성 (없으면 빈 문자열 \"\")",
+  "rd_budget": "여기에 연구개발비 조정의견을 한국어로 작성 (없으면 빈 문자열 \"\")",
+  "other": "여기에 기타의견을 한국어로 작성 (없으면 빈 문자열 \"\")"
 }
+    """.strip()
 
-규칙:
-- 다수의견을 기준으로 majority_label을 판단하되, 소수·상이 의견은 dissent_reviewers에 이름만 담는다.
-- summary는 합의·공통된 내용을 중심으로 간결하게(3~5문장). 상이의견은 본문에 넣지 않는다.
-- 특정 항목에 정보가 없으면 summary는 ""로 둔다.
-- 반드시 JSON object 하나만 출력한다.
-"""
 
-def call_gpt_json(system_prompt: str, user_prompt: str, max_tokens=1200) -> dict:
-    """response_format=json_object 를 사용해 JSON으로만 응답"""
-    try:
-        if not client:
-            raise RuntimeError("OpenAI client not configured")
-        resp = client.chat.completions.create(
-            model=CHAT_MODEL,
-            temperature=0.2,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=max_tokens,
-        )
-        import json
-        content = resp.choices[0].message.content
-        if DEBUG:
-            with st.expander("🧪 GPT Raw Response"):
-                st.code(content, language="json")
-        return json.loads(content)
-    except Exception as e:
-        if DEBUG:
-            st.error("❌ GPT 호출 실패")
-            st.exception(e)
-        # 실패 시 빈 구조 반환
-        return {
-            "sections": {s: {"summary": "", "majority_label": "중립", "dissent_reviewers": []} for s in SECTIONS}
-        }
+def call_openai_summary(reviewer_texts):
+    """OpenAI Responses API를 호출하여 JSON 형식 종합의견을 받는다."""
+    system_prompt = build_system_prompt()
 
-def semantic_contains(required_phrase: str, texts: list[str]) -> bool:
-    """필수 문구가 의미적으로 포함되는지 GPT로 판정"""
-    try:
-        joined = "\n".join([t for t in texts if t])
-        if not joined.strip():
-            return False
-        sys = "너는 의미 포함 여부만 판정한다. 반드시 JSON {\"contains\": true|false} 로만 답하라."
-        user = f"[요구문구]\n{required_phrase}\n\n[검토대상 텍스트]\n{joined}"
-        data = call_gpt_json(sys, user, max_tokens=200)
-        return bool(data.get("contains", False))
-    except Exception:
-        return False
+    # 사용자 입력 구성
+    user_content = "다음은 각 평가위원이 작성한 평가 의견입니다.\n\n"
+    for idx, txt in enumerate(reviewer_texts, start=1):
+        user_content += f"[위원 {idx} 의견]\n{txt.strip()}\n\n"
 
-# ============== 생성/축약 버튼 ==============
-left, mid, right = st.columns([2, 1, 1])
-with left:
-    gen_clicked = st.button("종합의견 생성", type="primary", use_container_width=True)
-with mid:
-    shrink_clicked = st.button("요약 더 줄이기", use_container_width=True)
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        response_format={"type": "json_object"},
+    )
 
-# ============== 생성 로직 ==============
-def generate():
-    # 사용자 프롬프트: 위원 이름과 전체 의견을 줄로 전달
-    lines = [f"- {nm}: {tx}" for nm, tx in zip(reviewer_names, reviewer_texts) if (tx or "").strip()]
-    if not lines:
-        st.warning("입력된 위원 의견이 없습니다.")
-        return
+    # responses API 구조에 맞게 텍스트 추출
+    raw_text = response.output[0].content[0].text
 
-    user_prompt = "[위원별 전체 의견]\n" + "\n".join(lines)
-    data = call_gpt_json(SYSTEM_JSON, user_prompt, max_tokens=1400)
+    data = json.loads(raw_text)
 
-    # 섹션별 결과 채우기
-    boxes = {s: "" for s in SECTIONS}
-    dissent_map = {s: set() for s in SECTIONS}
-    warnings = []
-    sections_json = (data or {}).get("sections", {}) or {}
+    # 비어있을 수 있는 필드를 기본값으로 보정
+    for key in ["technical", "business", "cooperation", "rd_budget", "other"]:
+        data.setdefault(key, "")
 
-    for s in SECTIONS:
-        entry = sections_json.get(s, {}) or {}
-        boxes[s] = (entry.get("summary") or "").strip()
-        for nm in entry.get("dissent_reviewers", []) or []:
-            if nm:
-                dissent_map[s].add(nm)
-        if entry.get("dissent_reviewers"):
-            warnings.append(f"[{s}] 상이의견: {', '.join(entry.get('dissent_reviewers', []))}")
+    return data
 
-    # 필수 문구 의미 포함 여부 (전체 텍스트 기반)
-    missing_msgs = []
-    all_text = "\n".join(reviewer_texts)
-    for req in REQUIRED_LINES:
-        if req and not semantic_contains(req, [all_text]):
-            missing_msgs.append(f"필수 기재 누락: {req}")
 
-    # 합본 텍스트(요청 형식)
-    combined = (
-        f"ㅇ 기술성\n{boxes['기술성']}\n\n"
-        f"ㅇ 사업성\n{boxes['사업성']}\n\n"
-        f"ㅇ 연구개발비 조정의견\n{boxes['연구개발비 조정']}\n\n"
-        f"ㅇ 기타사항\n{boxes['기타사항']}"
-    ).strip()
+def build_formatted_summary(data):
+    """JSON 데이터로부터 최종 출력용 텍스트를 조합"""
+    parts = []
 
-    st.session_state["result_boxes"] = boxes
-    st.session_state["result_combined"] = combined
-    st.session_state["dissent_map"] = dissent_map
-    st.session_state["warnings_dissent"] = warnings
-    st.session_state["missing_required"] = missing_msgs
+    if data.get("technical", "").strip():
+        parts.append("1. 기술성 종합의견\n" + data["technical"].strip())
 
-    st.success("✅ 종합의견 생성이 완료되었습니다. (아래 초안 영역에 표시됨)")
+    if data.get("business", "").strip():
+        parts.append("2. 사업성 종합의견\n" + data["business"].strip())
 
-def shrink_result():
-    """합본 텍스트와 섹션 요약을 더 간결하게"""
-    if not st.session_state.get("result_combined"):
-        st.warning("축약할 결과가 없습니다. 먼저 종합의견을 생성하세요.")
-        return
-    new_boxes = {}
-    for s, text in st.session_state.get("result_boxes", {}).items():
-        if not text.strip():
-            new_boxes[s] = text
-            continue
-        sys = "너는 글을 간결·명료하게 다듬는 편집자다. 반드시 JSON {\"summary\": \"...\"} 형식으로만 답하라."
-        user = f"[섹션] {s}\n아래 문단을 더 짧고 명료하게 다듬어라:\n{text}"
-        data = call_gpt_json(sys, user, max_tokens=300)
-        new_boxes[s] = (data.get("summary") or "").strip() or text
+    if data.get("cooperation", "").strip():
+        parts.append("3. 협약시 보완사항\n" + data["cooperation"].strip())
 
-    combined = (
-        f"ㅇ 기술성\n{new_boxes['기술성']}\n\n"
-        f"ㅇ 사업성\n{new_boxes['사업성']}\n\n"
-        f"ㅇ 연구개발비 조정의견\n{new_boxes['연구개발비 조정']}\n\n"
-        f"ㅇ 기타사항\n{new_boxes['기타사항']}"
-    ).strip()
+    if data.get("rd_budget", "").strip():
+        parts.append("4. 연구개발비 조정의견\n" + data["rd_budget"].strip())
 
-    st.session_state["result_boxes"] = new_boxes
-    st.session_state["result_combined"] = combined
-    st.success("✂️ 요약을 더 간결히 정리했습니다.")
+    if data.get("other", "").strip():
+        parts.append("5. 기타의견\n" + data["other"].strip())
 
-if gen_clicked:
-    with st.spinner("의견 분류/요약 중..."):
-        generate()
+    # 항목 중 일부가 비어 있을 수 있으니 join
+    return "\n\n".join(parts).strip()
 
-if shrink_clicked:
-    with st.spinner("축약 중..."):
-        shrink_result()
 
-# ============== 입력칸 하단 ‘상이의견 라벨’ ==============
-if any(st.session_state.get("dissent_map", {s: set() for s in SECTIONS}).values()):
-    st.markdown("---")
-    st.markdown("#### 🔴 상이의견(위원별 안내)")
-    # 위원별 어떤 섹션에서 상이인지 정리
-    reverse_map = defaultdict(list)
-    for sec, names in st.session_state.get("dissent_map", {}).items():
-        for nm in names:
-            reverse_map[nm].append(sec)
-    for nm in reviewer_names:
-        secs = reverse_map.get(nm, [])
-        if secs:
-            st.error(f"- **{nm}**: 상이의견 섹션 → {', '.join(secs)}")
+def byte_length(text: str) -> int:
+    return len(text.encode("utf-8"))
 
-# ============== 종합의견 초안(요청 형식) ==============
-st.markdown("### ✅ 종합의견 초안")
-st.text_area(
-    "draft",
-    value=st.session_state.get("result_combined", ""),
-    key="combined_out",
-    height=320,
-    label_visibility="collapsed"
+
+# ----------------------------
+# UI 시작
+# ----------------------------
+
+st.title("TIPS 선정평가 종합의견 도우미(평가간사용)")
+st.write(
+    "각 위원의 **혼합된 전체 의견**을 한 칸에 붙여넣으세요. "
+    "(기술성/사업성/연구개발비 조정/기타사항이 섞여 있어도 됩니다.) "
+    "`종합의견 생성`을 누르면 5개 항목으로 자동 분류·취합됩니다."
 )
 
-# ============== 섹션별 원문 박스(유지) ==============
-with st.expander("섹션별 요약 보기"):
-    for s in SECTIONS:
-        st.markdown(f"**{s}**")
-        st.text_area(
-            f"{s}_out",
-            value=st.session_state.get("result_boxes", {}).get(s, ""),
-            key=f"result_{s}",
-            height=150
+# 평가위원 수 (최대 5명 정도 가정)
+num_reviewers = st.number_input("평가위원 수", min_value=1, max_value=5, value=4, step=1)
+
+st.markdown("### 위원별 평가 의견 입력")
+
+cols = st.columns(num_reviewers)
+reviewer_texts = []
+for i in range(num_reviewers):
+    with cols[i]:
+        txt = st.text_area(
+            f"위원{i+1}",
+            value="",
+            height=220,
+            placeholder="위원 전체 의견을 그대로 붙여넣으세요.",
         )
+        reviewer_texts.append(txt)
 
-# ============== 경고(상이/필수누락) ==============
-warn_cols = st.columns(2)
-with warn_cols[0]:
-    for msg in st.session_state.get("warnings_dissent", []):
-        st.error(f"⚠️ {msg}")
-with warn_cols[1]:
-    for msg in st.session_state.get("missing_required", []):
-        st.error(f"❗ {msg}")
+st.write("")
+generate = st.button("🔴 종합의견 생성", type="primary")
 
-# ============== 다운로드 & 바이트 수 ==============
-combined_text = st.session_state.get("result_combined", "") or ""
-byte_len = len(combined_text.encode("utf-8"))
+# 세션 상태 초기화
+if "summary_text" not in st.session_state:
+    st.session_state["summary_text"] = ""
+if "last_sections" not in st.session_state:
+    st.session_state["last_sections"] = None
 
-c1, c2 = st.columns([1, 3])
-with c1:
-    st.caption(f"글자수(바이트): {byte_len} / 4000")
-with c2:
+if generate:
+    # 유효한(빈칸이 아닌) 의견만 사용
+    valid_texts = [t for t in reviewer_texts if t.strip()]
+    if not valid_texts:
+        st.warning("⚠️ 입력된 위원 의견이 없습니다. 최소 1명 이상의 의견을 넣어주세요.")
+    else:
+        with st.spinner("종합의견을 생성하는 중입니다... (수 초 소요)"):
+            try:
+                sections = call_openai_summary(valid_texts)
+                formatted = build_formatted_summary(sections)
+
+                st.session_state["summary_text"] = formatted
+                st.session_state["last_sections"] = sections
+
+                st.success("✅ 종합의견 생성이 완료되었습니다.")
+            except Exception as e:
+                st.error(f"❌ OpenAI 호출 중 오류가 발생했습니다: {e}")
+
+st.markdown("### 종합의견 초안")
+
+summary_text = st.session_state.get("summary_text", "")
+summary_text = st.text_area(
+    "종합의견 초안",
+    value=summary_text,
+    height=350,
+)
+
+# 바이트 수 표시
+st.caption(f"글자수(바이트 기준): {byte_length(summary_text)} / 4000")
+
+# 섹션별 요약 보기
+if st.session_state.get("last_sections"):
+    with st.expander("▸ 섹션별 내용 자세히 보기"):
+        sec = st.session_state["last_sections"]
+        st.markdown("#### 1. 기술성 종합의견")
+        st.write(sec.get("technical", "").strip() or "-")
+
+        st.markdown("#### 2. 사업성 종합의견")
+        st.write(sec.get("business", "").strip() or "-")
+
+        st.markdown("#### 3. 협약시 보완사항")
+        st.write(sec.get("cooperation", "").strip() or "-")
+
+        st.markdown("#### 4. 연구개발비 조정의견")
+        st.write(sec.get("rd_budget", "").strip() or "-")
+
+        st.markdown("#### 5. 기타의견")
+        st.write(sec.get("other", "").strip() or "-")
+
+
+st.write("")
+# TXT 다운로드 버튼
+if summary_text.strip():
     st.download_button(
-        "TXT로 다운로드",
-        data=combined_text or "결과가 없습니다.",
-        file_name="종합의견_초안.txt",
+        label="📄 TXT로 다운로드",
+        data=summary_text.encode("utf-8"),
+        file_name="tips_summary.txt",
         mime="text/plain",
-        use_container_width=True
     )
