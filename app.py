@@ -131,8 +131,8 @@ st.markdown(
         <div class="info-title">프롬프트 원칙</div>
         <ul>
             <li>원문에 없는 내용을 절대 생성하지 않음</li>
-            <li>중요 문장은 삭제하지 않음</li>
-            <li>동일 취지의 문장만 조심스럽게 병합</li>
+            <li>중요한 문장은 삭제하지 않음</li>
+            <li>동일 취지만 조심스럽게 병합</li>
             <li>최종 검토는 반드시 간사가 진행</li>
         </ul>
     </div>
@@ -243,4 +243,79 @@ def call_openai_for_summary(names, opinions):
 
 # ============================================================
 #  종합의견 생성 버튼
-# ==============================을 생성하세요.")
+# ============================================================
+
+generate = st.button("🔴 종합의견 생성", type="primary")
+
+st.subheader("📌 종합의견 초안")
+summary_area = st.empty()
+
+if "last_summary" not in st.session_state:
+    st.session_state.last_summary = ""
+
+# ============================================================
+#  버튼 클릭 시 GPT 요약 실행
+# ============================================================
+
+if generate:
+    with st.spinner("종합의견 생성 중..."):
+        result = call_openai_for_summary(reviewer_names, reviewer_texts)
+
+    if result is None:
+        st.stop()
+
+    sections = result["sections"]
+
+    def format_section(title, arr):
+        if not arr:
+            arr = ["별도 기재된 사항 없음."]
+        bullets = "\n".join(f"- {x}" for x in arr)
+        return f"{title}\n{bullets}"
+
+    final_text = (
+        format_section("1. 기술성 종합의견", sections.get("tech"))
+        + "\n\n"
+        + format_section("2. 사업성 종합의견", sections.get("biz"))
+        + "\n\n"
+        + format_section("3. 협약 시 보완사항", sections.get("improve"))
+        + "\n\n"
+        + format_section("4. 연구개발비 조정의견", sections.get("budget"))
+        + "\n\n"
+        + format_section("5. 기타 의견", sections.get("other"))
+    )
+
+    st.session_state.last_summary = final_text
+
+    summary_area.text_area(
+        "종합의견 초안 (수정 가능)",
+        value=final_text,
+        key="summary_editor",
+        height=350,
+    )
+
+else:
+    summary_area.text_area(
+        "종합의견 초안 (수정 가능)",
+        value=st.session_state.last_summary,
+        key="summary_editor",
+        height=350,
+    )
+
+# ============================================================
+#  TXT 다운로드 기능
+# ============================================================
+
+st.divider()
+st.markdown("#### 📄 TXT 다운로드")
+
+edited_text = st.session_state.get("summary_editor", "")
+
+if edited_text.strip():
+    st.download_button(
+        label="TXT로 다운로드",
+        data=edited_text,
+        file_name="tips_summary.txt",
+        mime="text/plain",
+    )
+else:
+    st.info("먼저 종합의견을 생성하세요.")
