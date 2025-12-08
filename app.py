@@ -480,7 +480,7 @@ with download_card:
             file_name="tips_summary.txt",
             mime="text/plain",
         )
-        st.caption("※ K-Startup 시스템 등에 붙여넣기 전에 한 번 더 눈으로 검토해 주세요.")
+        st.caption("※ IRIS 시스템 등에 붙여넣기 전에 한 번 더 눈으로 검토해 주세요.")
     else:
         st.info("먼저 위에서 **종합의견 생성**을 눌러 종합의견을 만든 뒤 다운로드할 수 있습니다.")
     st.markdown("</div>", unsafe_allow_html=True)
