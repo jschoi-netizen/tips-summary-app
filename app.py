@@ -163,8 +163,9 @@ for i in range(NUM_REVIEWERS):
         )
         reviewer_texts.append(txt.strip())
 
+
 # ============================================================
-#  GPT 처리 함수
+#  GPT 처리 함수 (1) — 종합의견 생성
 # ============================================================
 
 def call_openai_for_summary(names, opinions):
@@ -228,35 +229,120 @@ def call_openai_for_summary(names, opinions):
 
     try:
         return json.loads(raw)
-    except Exception:
+    except:
         match = re.search(r"\{.*\}", raw, re.S)
         if match:
             try:
                 return json.loads(match.group(0))
-            except Exception:
+            except:
                 st.error("JSON 파싱 실패\n" + raw)
                 return None
         st.error("JSON 분석 실패\n" + raw)
         return None
 
-# ============================================================
-#  세션 상태 초기화 (요약 텍스트용)
-# ============================================================
-
-if "summary_editor" not in st.session_state:
-    st.session_state["summary_editor"] = ""
 
 # ============================================================
-#  종합의견 생성 버튼
+#  GPT 처리 함수 (2) — 위원별 오탈자·이상 의견 체크
+#   👉 종합의견 로직과 완전히 분리, 참고용 리포트만 생성
+# ============================================================
+
+def check_typos_and_weird_points(names, opinions):
+    """위원별 오탈자/이상 의견/누락 섹션을 점검하는 리포트용 함수."""
+
+    joined = [o for o in opinions if o]
+    if not joined:
+        return None
+
+    reviewers_block = ""
+    for idx, (nm, txt) in enumerate(zip(names, opinions), start=1):
+        if not txt:
+            continue
+        reviewers_block += f"[위원 {idx}: {nm}]\n{txt}\n\n"
+
+    system_prompt = """
+당신은 한국 TIPS 평가 간사를 돕는 AI입니다.
+
+아래 위원별 원문을 보고, 각 위원에 대해 다음만 점검합니다:
+1) 오탈자 의심 / 문장이 비문처럼 보이는 부분 (원문 일부 그대로 인용)
+2) 같은 말을 과하게 반복하거나, 문단 구조가 이상한 부분
+3) '기술성/사업성/협약 시 보완사항/연구개발비 조정의견/기타 의견' 중
+   전혀 언급이 없는 영역이 있는지 여부 (있으면 어떤 영역이 비어 있는지)
+
+⚠️ 매우 중요한 규칙
+- 원문에 없는 내용을 새로 만들지 마세요.
+- 특정 위원이 실제로 쓰지 않은 의견(예: 연구개발비 전면 불허 등)을 추측하면 안 됩니다.
+- 확실하지 않으면 "모호하여 판단 어려움"이라고만 적으세요.
+- 이 리포트는 참고용이며, 종합의견 내용에는 일절 영향을 주지 않습니다.
+
+JSON ONLY 형식으로 출력하세요:
+
+{
+  "by_reviewer": [
+    {
+      "index": 1,
+      "name": "위원1",
+      "typos": [
+        "예: '매칭의 정확도85%' → '매칭의 정확도 85%'"
+      ],
+      "weird_phrases": [
+        "예: 문장이 너무 길어 의미 파악이 어려움: '...원문 일부...'"
+      ],
+      "missing_sections": [
+        "연구개발비 조정의견 미언급",
+        "협약 시 보완사항 미언급"
+      ]
+    }
+  ]
+}
+
+각 배열은 필요 없으면 빈 배열 [] 로 두세요.
+"""
+
+    user_prompt = f"아래는 위원별 의견 원문입니다. 위 JSON 형식으로만 출력해 주세요.\n\n{reviewers_block}"
+
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.0,
+        messages=[
+            {"role": "system", "content": system_prompt.strip()},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+
+    raw = completion.choices[0].message.content
+
+    try:
+        return json.loads(raw)
+    except:
+        match = re.search(r"\{.*\}", raw, re.S)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except:
+                st.error("오탈자/이상 의견 JSON 파싱 실패\n" + raw)
+                return None
+        st.error("오탈자/이상 의견 JSON 분석 실패\n" + raw)
+        return None
+
+
+# ============================================================
+#  버튼 영역
 # ============================================================
 
 generate = st.button("🔴 종합의견 생성", type="primary")
+check_btn = st.button("✏️ 위원별 오탈자·이상 의견 체크")
 
 st.subheader("📌 종합의견 초안")
 summary_area = st.empty()
 
+# 오탈자/이상 의견 결과 표시용 컨테이너
+check_container = st.container()
+
+if "last_summary" not in st.session_state:
+    st.session_state.last_summary = ""
+
 # ============================================================
-#  버튼 클릭 시 GPT 요약 실행
+#  버튼 클릭 시 GPT 요약 실행 (종합의견 생성)
 # ============================================================
 
 if generate:
@@ -266,7 +352,7 @@ if generate:
     if result is None:
         st.stop()
 
-    sections = result.get("sections", {})
+    sections = result["sections"]
 
     def format_section(title, arr):
         if not arr:
@@ -286,15 +372,73 @@ if generate:
         + format_section("5. 기타 의견", sections.get("other"))
     )
 
-    # 👉 새로 생성된 요약을 세션에 저장 (text_area가 이 값을 사용)
-    st.session_state["summary_editor"] = final_text
+    st.session_state.last_summary = final_text
 
-# 항상 현재 세션 상태(summary_editor)를 보여줌
-summary_area.text_area(
-    "종합의견 초안 (수정 가능)",
-    key="summary_editor",
-    height=350,
-)
+    summary_area.text_area(
+        "종합의견 초안 (수정 가능)",
+        value=final_text,
+        key="summary_editor",
+        height=350,
+    )
+
+else:
+    summary_area.text_area(
+        "종합의견 초안 (수정 가능)",
+        value=st.session_state.last_summary,
+        key="summary_editor",
+        height=350,
+    )
+
+# ============================================================
+#  버튼 클릭 시 오탈자/이상 의견 체크 (종합의견과 완전 분리)
+# ============================================================
+
+if check_btn:
+    with st.spinner("위원별 오탈자·이상 의견을 점검 중입니다..."):
+        report = check_typos_and_weird_points(reviewer_names, reviewer_texts)
+
+    check_container.markdown("### ✏️ 위원별 오탈자·이상 의견 결과")
+
+    if report is None:
+        check_container.info("점검할 위원 의견이 없습니다. 먼저 위원 의견을 입력해 주세요.")
+    else:
+        by_rev = report.get("by_reviewer", [])
+        any_issue = False
+
+        for item in by_rev:
+            idx = item.get("index")
+            name = item.get("name") or (reviewer_names[idx - 1] if isinstance(idx, int) and 1 <= idx <= NUM_REVIEWERS else f"위원{idx}")
+            typos = item.get("typos") or []
+            weirds = item.get("weird_phrases") or []
+            miss = item.get("missing_sections") or []
+
+            if not typos and not weirds and not miss:
+                # 이 위원은 특이사항 없음
+                check_container.success(f"위원 {idx} ({name}): 특별히 표시할 만한 오탈자·이상 의견이 감지되지 않았습니다.")
+                continue
+
+            any_issue = True
+            check_container.markdown(f"**위원 {idx} ({name})**")
+
+            if typos:
+                check_container.markdown("- 오탈자 의심:")
+                for t in typos:
+                    check_container.markdown(f"  - {t}")
+
+            if weirds:
+                check_container.markdown("- 문장/표현이 어색하거나 과도하게 긴 부분:")
+                for w in weirds:
+                    check_container.markdown(f"  - {w}")
+
+            if miss:
+                check_container.markdown("- 언급이 없는 것으로 보이는 항목:")
+                for m in miss:
+                    check_container.markdown(f"  - {m}")
+
+            check_container.markdown("---")
+
+        if not any_issue:
+            check_container.success("특별히 표시할 만한 오탈자·이상 의견이 감지되지 않았습니다.")
 
 # ============================================================
 #  TXT 다운로드 기능
@@ -314,3 +458,4 @@ if edited_text.strip():
     )
 else:
     st.info("먼저 종합의견을 생성하세요.")
+
