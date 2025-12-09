@@ -90,7 +90,7 @@ st.markdown(
 st.markdown(
     """
     <div class="title-wrapper">
-        <img src="https://i.imgur.com/YNn7dYk.png">
+        <img class="tips-logo" src="https://i.imgur.com/YNn7dYk.png">
         <div>
             <div class="main-title">TIPS 선정평가 종합의견 도우미(평가간사용)</div>
             <div class="subtitle-text">
@@ -163,7 +163,6 @@ for i in range(NUM_REVIEWERS):
         )
         reviewer_texts.append(txt.strip())
 
-
 # ============================================================
 #  GPT 처리 함수
 # ============================================================
@@ -229,17 +228,23 @@ def call_openai_for_summary(names, opinions):
 
     try:
         return json.loads(raw)
-    except:
+    except Exception:
         match = re.search(r"\{.*\}", raw, re.S)
         if match:
             try:
                 return json.loads(match.group(0))
-            except:
+            except Exception:
                 st.error("JSON 파싱 실패\n" + raw)
                 return None
         st.error("JSON 분석 실패\n" + raw)
         return None
 
+# ============================================================
+#  세션 상태 초기화 (요약 텍스트용)
+# ============================================================
+
+if "summary_editor" not in st.session_state:
+    st.session_state["summary_editor"] = ""
 
 # ============================================================
 #  종합의견 생성 버튼
@@ -249,9 +254,6 @@ generate = st.button("🔴 종합의견 생성", type="primary")
 
 st.subheader("📌 종합의견 초안")
 summary_area = st.empty()
-
-if "last_summary" not in st.session_state:
-    st.session_state.last_summary = ""
 
 # ============================================================
 #  버튼 클릭 시 GPT 요약 실행
@@ -264,7 +266,7 @@ if generate:
     if result is None:
         st.stop()
 
-    sections = result["sections"]
+    sections = result.get("sections", {})
 
     def format_section(title, arr):
         if not arr:
@@ -284,22 +286,15 @@ if generate:
         + format_section("5. 기타 의견", sections.get("other"))
     )
 
-    st.session_state.last_summary = final_text
+    # 👉 새로 생성된 요약을 세션에 저장 (text_area가 이 값을 사용)
+    st.session_state["summary_editor"] = final_text
 
-    summary_area.text_area(
-        "종합의견 초안 (수정 가능)",
-        value=final_text,
-        key="summary_editor",
-        height=350,
-    )
-
-else:
-    summary_area.text_area(
-        "종합의견 초안 (수정 가능)",
-        value=st.session_state.last_summary,
-        key="summary_editor",
-        height=350,
-    )
+# 항상 현재 세션 상태(summary_editor)를 보여줌
+summary_area.text_area(
+    "종합의견 초안 (수정 가능)",
+    key="summary_editor",
+    height=350,
+)
 
 # ============================================================
 #  TXT 다운로드 기능
