@@ -326,6 +326,13 @@ JSON ONLY 형식으로 출력하세요:
 
 
 # ============================================================
+#  세션 상태 초기화 (종합의견 텍스트)
+# ============================================================
+
+if "summary_editor" not in st.session_state:
+    st.session_state["summary_editor"] = ""
+
+# ============================================================
 #  버튼 영역
 # ============================================================
 
@@ -337,9 +344,6 @@ summary_area = st.empty()
 
 # 오탈자/이상 의견 결과 표시용 컨테이너
 check_container = st.container()
-
-if "last_summary" not in st.session_state:
-    st.session_state.last_summary = ""
 
 # ============================================================
 #  버튼 클릭 시 GPT 요약 실행 (종합의견 생성)
@@ -372,22 +376,15 @@ if generate:
         + format_section("5. 기타 의견", sections.get("other"))
     )
 
-    st.session_state.last_summary = final_text
+    # 👉 새로 생성된 요약을 세션에 저장
+    st.session_state["summary_editor"] = final_text
 
-    summary_area.text_area(
-        "종합의견 초안 (수정 가능)",
-        value=final_text,
-        key="summary_editor",
-        height=350,
-    )
-
-else:
-    summary_area.text_area(
-        "종합의견 초안 (수정 가능)",
-        value=st.session_state.last_summary,
-        key="summary_editor",
-        height=350,
-    )
+# 항상 현재 세션 상태(summary_editor)를 보여줌
+summary_area.text_area(
+    "종합의견 초안 (수정 가능)",
+    key="summary_editor",
+    height=350,
+)
 
 # ============================================================
 #  버튼 클릭 시 오탈자/이상 의견 체크 (종합의견과 완전 분리)
@@ -407,14 +404,19 @@ if check_btn:
 
         for item in by_rev:
             idx = item.get("index")
-            name = item.get("name") or (reviewer_names[idx - 1] if isinstance(idx, int) and 1 <= idx <= NUM_REVIEWERS else f"위원{idx}")
+            name = item.get("name") or (
+                reviewer_names[idx - 1]
+                if isinstance(idx, int) and 1 <= idx <= NUM_REVIEWERS
+                else f"위원{idx}"
+            )
             typos = item.get("typos") or []
             weirds = item.get("weird_phrases") or []
             miss = item.get("missing_sections") or []
 
             if not typos and not weirds and not miss:
-                # 이 위원은 특이사항 없음
-                check_container.success(f"위원 {idx} ({name}): 특별히 표시할 만한 오탈자·이상 의견이 감지되지 않았습니다.")
+                check_container.success(
+                    f"위원 {idx} ({name}): 특별히 표시할 만한 오탈자·이상 의견이 감지되지 않았습니다."
+                )
                 continue
 
             any_issue = True
@@ -458,4 +460,3 @@ if edited_text.strip():
     )
 else:
     st.info("먼저 종합의견을 생성하세요.")
-
